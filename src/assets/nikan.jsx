@@ -1,0 +1,311 @@
+import React, { useState, useEffect } from 'react';
+import { supabase } from './supabaseClient';
+import frontImg from './assets/front.jpg';
+import logo from './assets/logo.png'; // ඔයාගේ ලෝගෝ ෆයිල් එකේ නම දාන්න
+
+// 📂 Pages Components Import කිරීම
+import Home from './components/Home';
+import About from './components/About';
+import Contact from './components/Contact';
+
+// 📂 Local Assets Images
+import diagnosticsImg from './assets/diagnostics.jpg'; 
+import tuneupImg from './assets/tuneup.jpg';
+import detailingImg from './assets/detailing.jpg';
+
+function App() {
+  const [currentTab, setCurrentTab] = useState('home');
+  const [darkMode, setDarkMode] = useState(false);
+
+  // Authentication States
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [message, setMessage] = useState('');
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [userData, setUserData] = useState(null);
+  const [isSignUp, setIsSignUp] = useState(false);
+
+  // --- Customer System States ---
+  const [vehicles, setVehicles] = useState([]);
+  const [bookings, setBookings] = useState([]);
+  const [selectedVehicle, setSelectedVehicle] = useState('');
+  const [bookingDate, setBookingDate] = useState('');
+  const [bookingTimeSlot, setBookingTimeSlot] = useState('08:00 AM - 10:00 AM');
+  const [serviceType, setServiceType] = useState('Full Service');
+  const [bookingMessage, setBookingMessage] = useState('');
+  const [vehicleNumber, setVehicleNumber] = useState('');
+  const [brand, setBrand] = useState('');
+  const [model, setModel] = useState('');
+  const [vehicleMessage, setVehicleMessage] = useState('');
+
+  // --- Admin System States ---
+  const [allBookings, setAllBookings] = useState([]);
+
+  useEffect(() => {
+    const savedUser = localStorage.getItem('autoEaseUser');
+    if (savedUser) {
+      try {
+        const parsedUser = JSON.parse(savedUser);
+        setUserData(parsedUser);
+        setIsLoggedIn(true);
+        if (parsedUser.role === 'admin') { fetchAdminBookings(); } 
+        else { fetchUserVehicles(parsedUser.id); fetchUserBookings(parsedUser.id); }
+      } catch (err) { console.error(err); }
+    }
+  }, []);
+
+  // --- Auth Functions ---
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      const user = data.user;
+      const userRole = user.user_metadata?.role || 'customer'; 
+      const sessionUser = { id: user.id, email: user.email, role: userRole, name: user.email.split('@')[0] };
+      setUserData(sessionUser);
+      setIsLoggedIn(true);
+      localStorage.setItem('autoEaseUser', JSON.stringify(sessionUser));
+      if (sessionUser.role === 'admin') { fetchAdminBookings(); } 
+      else { fetchUserVehicles(sessionUser.id); fetchUserBookings(sessionUser.id); }
+      setMessage('');
+    } catch (error) { setMessage("Invalid Email or Password!"); }
+  };
+
+  const handleSignUp = async (e) => {
+    e.preventDefault();
+    try {
+      const { error } = await supabase.auth.signUp({ email, password, options: { data: { role: 'customer' } } });
+      if (error) throw error;
+      setMessage("🎉 Account Created! Please login.");
+      setIsSignUp(false);
+    } catch (error) { setMessage(error.message); }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    localStorage.removeItem('autoEaseUser');
+    setIsLoggedIn(false); setUserData(null);
+    setCurrentTab('home');
+  };
+
+  // --- Data Fetching ---
+  const fetchUserVehicles = async (userId) => {
+    const { data } = await supabase.from('vehicles').select('*').eq('user_id', userId);
+    setVehicles(data || []);
+    if (data && data.length > 0) setSelectedVehicle(data[0].id);
+  };
+
+  const fetchUserBookings = async (userId) => {
+    const { data } = await supabase.from('bookings').select('*').eq('user_id', userId);
+    setBookings(data || []);
+  };
+
+  const handleAddVehicle = async (e) => {
+    e.preventDefault();
+    try {
+      const { error } = await supabase.from('vehicles').insert([{ user_id: userData.id, vehicle_number: vehicleNumber.trim(), brand: brand.trim(), model: model.trim(), vehicle_type: 'Car' }]);
+      if (error) throw error;
+      setVehicleMessage("🚗 Vehicle Added Successfully!"); setVehicleNumber(''); setBrand(''); setModel('');
+      fetchUserVehicles(userData.id);
+    } catch (error) { setVehicleMessage(error.message); }
+  };
+
+  const handleCreateBooking = async (e) => {
+    e.preventDefault();
+    const currentVehicle = vehicles.find(v => v.id == selectedVehicle);
+    const vehicleDetails = currentVehicle ? `${currentVehicle.brand} ${currentVehicle.model} [${currentVehicle.vehicle_number}]` : 'N/A';
+    try {
+      const { error } = await supabase.from('bookings').insert([{ user_id: userData.id, user_name: userData.name, vehicle_number: vehicleDetails, booking_date: bookingDate, booking_slot: bookingTimeSlot, service_type: serviceType, status: 'Pending' }]);
+      if (error) throw error;
+      setBookingMessage("🎉 Booking Created!");
+      fetchUserBookings(userData.id);
+    } catch (error) { setBookingMessage(error.message); }
+  };
+
+  const fetchAdminBookings = async () => {
+    const { data } = await supabase.from('bookings').select('*');
+    setAllBookings(data || []);
+  };
+
+  const handleUpdateStatus = async (bookingId, newStatus) => {
+    await supabase.from('bookings').update({ status: newStatus }).eq('id', bookingId);
+    setAllBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status: newStatus } : b));
+  };
+
+  return (
+    <div className={`min-h-screen font-sans antialiased scroll-smooth transition-colors duration-300 ${darkMode ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'}`}>
+      
+      {/* 🌐 NAV BAR */}
+      <nav className={`sticky top-0 z-50 border-b px-6 py-4 flex justify-between items-center shadow-sm backdrop-blur-md transition-colors duration-300 ${darkMode ? 'bg-slate-900/90 border-slate-800' : 'bg-white/80 border-slate-200'}`}>
+        
+        {/* මෙතනයි ඔයාගේ Logo එක සහ නම තියෙන්න ඕනේ */}
+        <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setCurrentTab('home')}>
+          <img src={logo} alt="Logo" className="h-10 w-auto" /> 
+          <span className={`text-2xl font-black tracking-wider ${darkMode ? 'text-white' : 'text-blue-900'}`}>AUTOEASE</span>
+        </div>
+        
+        {/* Nav Links */}
+        <div className={`hidden md:flex items-center space-x-8 font-semibold text-lg ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>
+          <button onClick={() => setCurrentTab('home')} className={`hover:text-blue-500 transition-colors ${currentTab === 'home' && 'text-blue-500 font-bold'}`}>Home</button>
+          <button onClick={() => setCurrentTab('about')} className={`hover:text-blue-500 transition-colors ${currentTab === 'about' && 'text-blue-500 font-bold'}`}>About Us</button>
+          <button onClick={() => setCurrentTab('contact')} className={`hover:text-blue-500 transition-colors ${currentTab === 'contact' && 'text-blue-500 font-bold'}`}>Contact Us</button>
+        </div>
+
+        {/* Action Buttons */}
+        {/* Action Buttons, Login & Support Section */}
+        {/* Login & Divider & Dark Mode */}
+        <div className="flex items-center space-x-6">
+          {/* Login Button */}
+            <button 
+                onClick={() => setCurrentTab('system')} 
+                className={`font-bold text-base hover:text-blue-500 transition ${darkMode ? 'text-white' : 'text-slate-900'}`}
+                >
+                Login
+            </button>
+
+            {/* මැද තියෙන සිරස් ඉර (Vertical Divider) */}
+            <div className={`h-6 w-[1px] ${darkMode ? 'bg-slate-700' : 'bg-slate-300'}`}></div>
+
+            {/* Dark Mode Button */}
+            <button 
+                onClick={() => setDarkMode(!darkMode)} 
+                className={`px-4 py-2 text-base font-bold rounded-full border transition ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-100 border-slate-200'}`}
+            >
+            {darkMode ? '☀️ LIGHT' : '🌙 DARK'}
+            </button>
+        </div>
+       </nav> {/* Nav එක වහන්න අමතක කරන්න එපා */}
+
+      {/* 📄 CONDITIONALLY RENDER PAGES */}
+      {currentTab === 'home' && (
+        <Home 
+          darkMode={darkMode} 
+          setCurrentTab={setCurrentTab} 
+          frontImg={frontImg} 
+          diagnosticsImg={diagnosticsImg} 
+          tuneupImg={tuneupImg} 
+          detailingImg={detailingImg} 
+        />
+      )}
+      
+      {currentTab === 'about' && <About darkMode={darkMode} />}
+      
+      {currentTab === 'contact' && <Contact darkMode={darkMode} />}
+
+      {/* 4️⃣ LIVE SYSTEM HUB (Dashboard එක App.jsx එකේම තියාගත්තා Stateful හින්දා) */}
+      {currentTab === 'system' && (
+        <div className="max-w-6xl mx-auto px-4 py-12 animate-fadeIn">
+          {!isLoggedIn ? (
+            <div className="flex items-center justify-center min-h-[50vh]">
+              <div className={`w-full max-w-md border p-8 rounded-3xl shadow-xl ${darkMode ? 'bg-slate-900 border-slate-800 shadow-black/30' : 'bg-white border-slate-200 shadow-slate-200/50'}`}>
+                <h2 className={`text-2xl font-black text-center mb-6 ${darkMode ? 'text-white' : 'text-slate-900'}`}>🚗 {isSignUp ? 'Create Fleet Account' : 'Secure System Console'}</h2>
+                <form onSubmit={isSignUp ? handleSignUp : handleLogin} className="space-y-4">
+                  <div>
+                    <label className="text-xs font-bold text-slate-400 block mb-1">EMAIL ADDRESS</label>
+                    <input type="email" placeholder="name@company.com" value={email} onChange={e => setEmail(e.target.value)} required className={`w-full px-4 py-2.5 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm font-medium ${darkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-800'}`} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-400 block mb-1">PASSWORD</label>
+                    <input type="password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} required className={`w-full px-4 py-2.5 border rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm font-medium ${darkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200 text-slate-800'}`} />
+                  </div>
+                  <button type="submit" className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-md transition mt-2">{isSignUp ? 'Generate Account' : 'Authenticate Session'}</button>
+                </form>
+                <p className="text-center mt-5 text-xs">
+                  <button onClick={() => { setIsSignUp(!isSignUp); setMessage(''); }} className="text-blue-500 font-bold hover:underline">{isSignUp ? 'Access Portal via Existing Identity' : 'Register New Fleet Machine Identity'}</button>
+                </p>
+                {message && <p className={`mt-4 text-center text-xs font-bold py-2.5 rounded-xl border ${darkMode ? 'bg-slate-950 border-slate-800 text-blue-400' : 'bg-blue-50 border-blue-100 text-blue-900'}`}>{message}</p>}
+              </div>
+            </div>
+          ) : (
+            <div>
+              {userData?.role === 'admin' ? (
+                <div className={`p-6 rounded-3xl border shadow-sm ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                  <h3 className={`text-xl font-black mb-6 border-b pb-3 flex items-center justify-between ${darkMode ? 'text-white border-slate-800' : 'text-slate-900 border-slate-200'}`}>👑 Admin Dispatch Registry <span className="text-xs bg-blue-600 text-white px-2.5 py-0.5 rounded-full font-mono">LIVE Sync</span></h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {allBookings.map(b => (
+                      <div key={b.id} className={`border p-5 rounded-2xl flex flex-col justify-between ${darkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-50/50 border-slate-200'}`}>
+                        <div>
+                          <div className="flex justify-between font-bold items-center"><span className="text-blue-500 text-base">{b.service_type}</span><span className={`text-xs px-2.5 py-0.5 rounded-full font-black uppercase ${b.status === 'Pending' ? 'bg-amber-500/10 text-amber-500 border border-amber-500/30' : b.status === 'Approved' ? 'bg-blue-500/10 text-blue-500 border border-blue-500/30' : 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/30'}`}>{b.status}</span></div>
+                          <p className={`text-sm mt-3 ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>👤 <strong>Client Identity:</strong> {b.user_name} | 🚗 <strong>Spec:</strong> {b.vehicle_number}</p>
+                          <p className="text-xs text-slate-400 mt-1">📅 Stamp: {b.booking_date} | ⏱️ Slot: {b.booking_slot}</p>
+                        </div>
+                        <div className={`mt-5 pt-3 border-t flex gap-2 ${darkMode ? 'border-slate-800' : 'border-slate-200/60'}`}>
+                          {b.status === 'Pending' && <button onClick={() => handleUpdateStatus(b.id, 'Approved')} className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-sm">Approve Queue</button>}
+                          {b.status === 'Approved' && <button onClick={() => handleUpdateStatus(b.id, 'Completed')} className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-sm">Mark Accomplished</button>}
+                          {b.status === 'Completed' && <span className="text-emerald-500 text-xs font-bold flex items-center">✓ Sector Clearance Complete</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-8">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className={`p-6 rounded-3xl border shadow-sm ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                      <h3 className={`font-black mb-4 text-lg ${darkMode ? 'text-white' : 'text-slate-900'}`}>🚗 Register New Machine Identity</h3>
+                      <form onSubmit={handleAddVehicle} className="space-y-3">
+                        <input type="text" placeholder="License Plate Number" value={vehicleNumber} onChange={e => setVehicleNumber(e.target.value)} required className={`w-full px-3 py-2.5 border rounded-xl text-sm font-medium ${darkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200'}`} />
+                        <input type="text" placeholder="Manufacturer (eg: BMW)" value={brand} onChange={e => setBrand(e.target.value)} required className={`w-full px-3 py-2.5 border rounded-xl text-sm font-medium ${darkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200'}`} />
+                        <input type="text" placeholder="Model Class (eg: i8)" value={model} onChange={e => setModel(e.target.value)} required className={`w-full px-3 py-2.5 border rounded-xl text-sm font-medium ${darkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-200'}`} />
+                        <button type="submit" className={`w-full py-2.5 rounded-xl font-bold text-sm shadow transition ${darkMode ? 'bg-white text-slate-900 hover:bg-slate-100' : 'bg-slate-950 text-white hover:bg-slate-800'}`}>Inject Into Database</button>
+                      </form>
+                      {vehicleMessage && <p className="text-xs mt-2 text-emerald-500 font-bold">{vehicleMessage}</p>}
+                    </div>
+                    
+                    <div className={`p-6 rounded-3xl border shadow-sm ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                      <h3 className="font-black mb-4 text-blue-500 text-lg">📅 Request Operational Slot</h3>
+                      <form onSubmit={handleCreateBooking} className="space-y-3">
+                        <select value={selectedVehicle} onChange={e => setSelectedVehicle(e.target.value)} className={`w-full px-3 py-2.5 border rounded-xl text-sm font-medium ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-700'}`}>
+                          {vehicles.length === 0 && <option value="">-- No Machines Detected --</option>}
+                          {vehicles.map(v => <option key={v.id} value={v.id}>{v.brand} [{v.vehicle_number}]</option>)}
+                        </select>
+                        <select value={serviceType} onChange={e => setServiceType(e.target.value)} className={`w-full px-3 py-2.5 border rounded-xl text-sm font-medium ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-700'}`}>
+                          <option value="Full Service">Full Diagnostics + Service</option>
+                          <option value="Body Wash">Showroom Clean Detailing</option>
+                          <option value="Engine Tune-up">Powertrain Performance Tuning</option>
+                        </select>
+                        <input type="date" value={bookingDate} onChange={e => setBookingDate(e.target.value)} required className={`w-full px-3 py-2.5 border rounded-xl text-sm font-medium ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-700'}`} />
+                        <select value={bookingTimeSlot} onChange={e => setBookingTimeSlot(e.target.value)} className={`w-full px-3 py-2.5 border rounded-xl text-sm font-medium ${darkMode ? 'bg-slate-950 border-slate-800 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-700'}`}>
+                          <option value="08:00 AM - 10:00 AM">08:00 AM - 10:00 AM</option>
+                          <option value="10:00 AM - 12:00 PM">10:00 AM - 12:00 PM</option>
+                          <option value="01:00 PM - 03:00 PM">01:00 PM - 03:00 PM</option>
+                        </select>
+                        <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-xl font-bold text-sm shadow transition">Verify Reservation Queue</button>
+                      </form>
+                      {bookingMessage && <p className="text-xs mt-2 text-blue-500 font-bold">{bookingMessage}</p>}
+                    </div>
+                  </div>
+                  
+                  <div className={`p-6 rounded-3xl border shadow-sm ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                    <h3 className={`font-black text-lg mb-4 border-b pb-2 ${darkMode ? 'text-white border-slate-800' : 'text-slate-900 border-slate-200'}`}>📅 Operational Dispatch History</h3>
+                    {bookings.length === 0 ? (
+                      <p className="text-slate-400 text-xs">No logged activities found in this registry.</p>
+                    ) : (
+                      bookings.map(b => (
+                        <div key={b.id} className={`py-4 flex justify-between items-center border-b last:border-none ${darkMode ? 'border-slate-800' : 'border-slate-100'}`}>
+                          <div>
+                            <p className={`font-bold text-base ${darkMode ? 'text-white' : 'text-slate-900'}`}>{b.service_type}</p>
+                            <p className="text-xs text-slate-400 mt-0.5">⚙️ Target Fleet: {b.vehicle_number} | 📆 Date: {b.booking_date} | ⏱️ Window: {b.booking_slot}</p>
+                          </div>
+                          <span className={`text-xs px-3 py-1 rounded-full font-bold uppercase ${b.status === 'Pending' ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20' : b.status === 'Approved' ? 'bg-blue-500/10 text-blue-500 border border-blue-500/20' : 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'}`}>{b.status}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 📊 FOOTER SECTION */}
+      <footer className={`border-t mt-20 px-6 py-8 text-center text-xs text-slate-400 transition-colors duration-300 ${darkMode ? 'bg-slate-950 border-slate-900' : 'bg-white border-slate-200'}`}>
+        <p>© 2026 AutoEase Core Laboratories Inc. High-Precision Machine Maintenance. All rights reserved.</p>
+      </footer>
+    </div>
+  );
+}
+
+export default App;
